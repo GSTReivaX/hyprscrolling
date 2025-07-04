@@ -1,4 +1,4 @@
-> This repo is a copy of offical repo
+> This repo is a partial copy of offical plugin repo 
 
 # hyprscrolling
 
