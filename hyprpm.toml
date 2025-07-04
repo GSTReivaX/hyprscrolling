@@ -1,0 +1,12 @@
+[repository]
+name = "hyprscrolling"
+authors = ["Vaxry"]
+
+[hyprscrolling]
+description = "A plugin to add a scrolling layout"
+authors = ["Vaxry"]
+output = "hyprscrolling/hyprscrolling.so"
+build = [
+    "make -C hyprscrolling all",
+]
+since_hyprland = 6066
