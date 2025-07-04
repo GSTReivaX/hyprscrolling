@@ -1,3 +1,5 @@
+> This repo is a copy of offical repo
+
 # hyprscrolling
 
 Adds a scrolling layout to Hyprland.
