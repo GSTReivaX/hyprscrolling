@@ -4,7 +4,7 @@
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
-#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
+//#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/render/Renderer.hpp>
