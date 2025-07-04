@@ -1,4 +1,5 @@
-> This repo is a partial copy of offical plugin repo 
+> This repo partially copied from offical plugin repo 
+> And I fixed the build failure
 
 # hyprscrolling
 
