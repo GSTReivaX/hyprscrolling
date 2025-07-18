@@ -1,6 +1,5 @@
 > This repo partially copied from offical plugin repo 
-> And I fixed the build failure
-
+> Last Sync:2025-07-18
 # hyprscrolling
 
 Adds a scrolling layout to Hyprland.
