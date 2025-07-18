@@ -4,7 +4,7 @@
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
-//#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -28,6 +28,14 @@ void SColumnData::add(PHLWINDOW w) {
     windowDatas.emplace_back(makeShared<SScrollingWindowData>(w, self.lock(), 1.F / (float)(windowDatas.size() + 1)));
 }
 
+void SColumnData::add(PHLWINDOW w, int after) {
+    for (auto& wd : windowDatas) {
+        wd->windowSize *= (float)windowDatas.size() / (float)(windowDatas.size() + 1);
+    }
+
+    windowDatas.insert(windowDatas.begin() + after + 1, makeShared<SScrollingWindowData>(w, self.lock(), 1.F / (float)(windowDatas.size() + 1)));
+}
+
 void SColumnData::add(SP<SScrollingWindowData> w) {
     for (auto& wd : windowDatas) {
         wd->windowSize *= (float)windowDatas.size() / (float)(windowDatas.size() + 1);
@@ -36,6 +44,33 @@ void SColumnData::add(SP<SScrollingWindowData> w) {
     windowDatas.emplace_back(w);
     w->column     = self;
     w->windowSize = 1.F / (float)(windowDatas.size());
+}
+
+void SColumnData::add(SP<SScrollingWindowData> w, int after) {
+    for (auto& wd : windowDatas) {
+        wd->windowSize *= (float)windowDatas.size() / (float)(windowDatas.size() + 1);
+    }
+
+    windowDatas.insert(windowDatas.begin() + after + 1, w);
+    w->column     = self;
+    w->windowSize = 1.F / (float)(windowDatas.size());
+}
+
+size_t SColumnData::idx(PHLWINDOW w) {
+    for (size_t i = 0; i < windowDatas.size(); ++i) {
+        if (windowDatas[i]->window == w)
+            return i;
+    }
+    return 0;
+}
+
+size_t SColumnData::idxForHeight(float y) {
+    for (size_t i = 0; i < windowDatas.size(); ++i) {
+        if (windowDatas[i]->window->m_position.y < y)
+            continue;
+        return i - 1;
+    }
+    return windowDatas.size() - 1;
 }
 
 void SColumnData::remove(PHLWINDOW w) {
@@ -110,7 +145,7 @@ SP<SColumnData> SWorkspaceData::add() {
     return col;
 }
 
-SP<SColumnData> SWorkspaceData::add(size_t after) {
+SP<SColumnData> SWorkspaceData::add(int after) {
     static const auto PCOLWIDTH = CConfigValue<Hyprlang::FLOAT>("plugin:hyprscrolling:column_width");
     auto              col       = makeShared<SColumnData>(self.lock());
     col->self                   = col;
@@ -242,7 +277,8 @@ void SWorkspaceData::recalculate(bool forceInstant) {
     double       currentLeft = 0;
     const double cameraLeft  = MAX_WIDTH < USABLE.w ? std::round((MAX_WIDTH - USABLE.w) / 2.0) : leftOffset; // layout pixels
 
-    for (const auto& COL : columns) {
+    for (size_t i = 0; i < columns.size(); ++i) {
+        const auto&  COL        = columns[i];
         double       currentTop = 0.0;
         const double ITEM_WIDTH = *PFSONONE && columns.size() == 1 ? USABLE.w : USABLE.w * COL->columnWidth;
 
@@ -252,10 +288,12 @@ void SWorkspaceData::recalculate(bool forceInstant) {
 
             currentTop += WINDOW->windowSize * USABLE.h;
 
-            layout->applyNodeDataToWindow(WINDOW, forceInstant);
+            layout->applyNodeDataToWindow(WINDOW, forceInstant, i != columns.size() - 1, i != 0);
         }
 
         currentLeft += ITEM_WIDTH;
+        if (currentLeft == USABLE.width)
+            currentLeft++; // avoid ffm from "grabbing" the window on the right
     }
 }
 
@@ -289,7 +327,7 @@ bool SWorkspaceData::visible(SP<SColumnData> c) {
     return false;
 }
 
-void CScrollingLayout::applyNodeDataToWindow(SP<SScrollingWindowData> data, bool force) {
+void CScrollingLayout::applyNodeDataToWindow(SP<SScrollingWindowData> data, bool force, bool hasWindowsRight, bool hasWindowsLeft) {
     PHLMONITOR   PMONITOR;
     PHLWORKSPACE PWORKSPACE;
 
@@ -312,8 +350,8 @@ void CScrollingLayout::applyNodeDataToWindow(SP<SScrollingWindowData> data, bool
     }
 
     // for gaps outer
-    const bool DISPLAYLEFT   = STICKS(data->layoutBox.x, PMONITOR->m_position.x + PMONITOR->m_reservedTopLeft.x);
-    const bool DISPLAYRIGHT  = STICKS(data->layoutBox.x + data->layoutBox.w, PMONITOR->m_position.x + PMONITOR->m_size.x - PMONITOR->m_reservedBottomRight.x);
+    const bool DISPLAYLEFT   = !hasWindowsLeft && STICKS(data->layoutBox.x, PMONITOR->m_position.x + PMONITOR->m_reservedTopLeft.x);
+    const bool DISPLAYRIGHT  = !hasWindowsRight && STICKS(data->layoutBox.x + data->layoutBox.w, PMONITOR->m_position.x + PMONITOR->m_size.x - PMONITOR->m_reservedBottomRight.x);
     const bool DISPLAYTOP    = STICKS(data->layoutBox.y, PMONITOR->m_position.y + PMONITOR->m_reservedTopLeft.y);
     const bool DISPLAYBOTTOM = STICKS(data->layoutBox.y + data->layoutBox.h, PMONITOR->m_position.y + PMONITOR->m_size.y - PMONITOR->m_reservedBottomRight.y);
 
@@ -431,6 +469,30 @@ void CScrollingLayout::onEnable() {
         }
     });
 
+    m_focusCallback = g_pHookSystem->hookDynamic("activeWindow", [this](void* hk, SCallbackInfo& info, std::any param) {
+        const auto PWINDOW = std::any_cast<PHLWINDOW>(param);
+
+        if (!PWINDOW)
+            return;
+
+        static const auto PFOLLOW_FOCUS = CConfigValue<Hyprlang::INT>("plugin:hyprscrolling:follow_focus");
+
+        if (!*PFOLLOW_FOCUS)
+            return;
+
+        if (!PWINDOW->m_workspace->isVisible())
+            return;
+
+        const auto DATA       = dataFor(PWINDOW->m_workspace);
+        const auto WINDOWDATA = dataFor(PWINDOW);
+
+        if (!DATA || !WINDOWDATA)
+            return;
+
+        DATA->fitCol(WINDOWDATA->column.lock());
+        DATA->recalculate();
+    });
+
     for (auto const& w : g_pCompositor->m_windows) {
         if (w->m_isFloating || !w->m_isMapped || w->isHidden())
             continue;
@@ -470,7 +532,12 @@ void CScrollingLayout::onWindowCreatedTiling(PHLWINDOW window, eDirection direct
         workspaceData->fitCol(col);
     } else {
         if (window->m_draggingTiled) {
-            droppingColumn->add(window);
+            if (droppingOn) {
+                const auto IDX = droppingColumn->idx(droppingOn);
+                const auto TOP = droppingOn->getWindowIdealBoundingBoxIgnoreReserved().middle().y > g_pInputManager->getMouseCoordsInternal().y;
+                droppingColumn->add(window, TOP ? (IDX == 0 ? -1 : IDX - 1) : (IDX));
+            } else
+                droppingColumn->add(window);
             workspaceData->fitCol(droppingColumn);
         } else {
             auto idx = workspaceData->idx(droppingColumn);
@@ -655,7 +722,7 @@ void CScrollingLayout::fullscreenRequestForWindow(PHLWINDOW pWindow, const eFull
         // if it got its fullscreen disabled, set back its node if it had one
 
         if (PNODE)
-            applyNodeDataToWindow(PNODE, false);
+            applyNodeDataToWindow(PNODE, false, false, false);
         else {
             // get back its' dimensions from position and size
             *pWindow->m_realPosition = pWindow->m_lastFloatingPosition;
@@ -681,7 +748,7 @@ void CScrollingLayout::fullscreenRequestForWindow(PHLWINDOW pWindow, const eFull
             fakeNode->ignoreFullscreenChecks = true;
             fakeNode->overrideWorkspace      = pWindow->m_workspace;
 
-            applyNodeDataToWindow(fakeNode, false);
+            applyNodeDataToWindow(fakeNode, false, false, false);
         }
     }
 
@@ -1058,12 +1125,20 @@ void CScrollingLayout::moveWindowTo(PHLWINDOW w, const std::string& dir, bool si
 
     if (dir == "l") {
         const auto COL = WS->prev(DATA->column.lock());
-        if (!COL)
-            return;
 
         DATA->column->remove(w);
-        COL->add(DATA);
-        WS->centerCol(COL);
+
+        if (!COL) {
+            const auto NEWCOL = WS->add(-1);
+            NEWCOL->add(DATA);
+            WS->centerCol(NEWCOL);
+        } else {
+            if (COL->windowDatas.size() > 1 || DATA->column)
+                COL->add(DATA, COL->idxForHeight(g_pInputManager->getMouseCoordsInternal().y) - 1);
+            else
+                COL->add(DATA);
+            WS->centerCol(COL);
+        }
     } else if (dir == "r") {
         const auto COL = WS->next(DATA->column.lock());
 
@@ -1075,7 +1150,10 @@ void CScrollingLayout::moveWindowTo(PHLWINDOW w, const std::string& dir, bool si
             NEWCOL->add(DATA);
             WS->centerCol(NEWCOL);
         } else {
-            COL->add(DATA);
+            if (COL->windowDatas.size() > 1 || DATA->column)
+                COL->add(DATA, COL->idxForHeight(g_pInputManager->getMouseCoordsInternal().y) - 1);
+            else
+                COL->add(DATA);
             WS->centerCol(COL);
         }
 
