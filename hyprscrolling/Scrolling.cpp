@@ -612,6 +612,7 @@ void CScrollingLayout::onBeginDragWindow() {
 
 void CScrollingLayout::resizeActiveWindow(const Vector2D& delta, eRectCorner corner, PHLWINDOW pWindow) {
     const auto PWINDOW = pWindow ? pWindow : g_pCompositor->m_lastWindow.lock();
+    Vector2D   modDelta = delta;
 
     if (!validMapped(PWINDOW))
         return;
@@ -625,9 +626,6 @@ void CScrollingLayout::resizeActiveWindow(const Vector2D& delta, eRectCorner cor
         PWINDOW->updateWindowDecos();
         return;
     }
-
-    if (corner == CORNER_NONE)
-        return;
 
     if (!DATA->column || !DATA->column->workspace || !DATA->column->workspace->workspace || !DATA->column->workspace->workspace->m_monitor)
         return;
@@ -666,6 +664,14 @@ void CScrollingLayout::resizeActiveWindow(const Vector2D& delta, eRectCorner cor
         const auto CURR_WD = DATA;
         const auto NEXT_WD = DATA->column->next(DATA);
         const auto PREV_WD = DATA->column->prev(DATA);
+        if (corner == CORNER_NONE) {
+            if (!PREV_WD)
+                corner = CORNER_BOTTOMRIGHT;
+            else {
+                corner = CORNER_TOPRIGHT;
+                modDelta.y *= -1.0f;
+            }
+        }
 
         switch (corner) {
             case CORNER_BOTTOMLEFT:
@@ -687,10 +693,10 @@ void CScrollingLayout::resizeActiveWindow(const Vector2D& delta, eRectCorner cor
                 if (!PREV_WD)
                     break;
 
-                if (PREV_WD->windowSize <= MIN_ROW_HEIGHT && delta.y <= 0 || CURR_WD->windowSize <= MIN_ROW_HEIGHT && delta.y >= 0)
+                if (PREV_WD->windowSize <= MIN_ROW_HEIGHT && modDelta.y <= 0 || CURR_WD->windowSize <= MIN_ROW_HEIGHT && delta.y >= 0)
                     break;
 
-                float adjust = std::clamp((float)(delta.y / USABLE.h), -(PREV_WD->windowSize - MIN_ROW_HEIGHT), (CURR_WD->windowSize - MIN_ROW_HEIGHT));
+                float adjust = std::clamp((float)(modDelta.y / USABLE.h), -(PREV_WD->windowSize - MIN_ROW_HEIGHT), (CURR_WD->windowSize - MIN_ROW_HEIGHT));
 
                 PREV_WD->windowSize = std::clamp(PREV_WD->windowSize + adjust, MIN_ROW_HEIGHT, MAX_ROW_HEIGHT);
                 CURR_WD->windowSize = std::clamp(CURR_WD->windowSize - adjust, MIN_ROW_HEIGHT, MAX_ROW_HEIGHT);
@@ -1038,7 +1044,8 @@ std::any CScrollingLayout::layoutMessage(SLayoutMessageHeader header, std::strin
             WDATA->recalculate();
         }
     } else if (ARGS[0] == "focus") {
-        const auto WDATA = dataFor(g_pCompositor->m_lastWindow.lock());
+        const auto        WDATA       = dataFor(g_pCompositor->m_lastWindow.lock());
+        static const auto PNOFALLBACK = CConfigValue<Hyprlang::INT>("general:no_focus_fallback");
 
         if (!WDATA || ARGS[1].empty())
             return {};
@@ -1047,8 +1054,12 @@ std::any CScrollingLayout::layoutMessage(SLayoutMessageHeader header, std::strin
             case 'u':
             case 't': {
                 auto PREV = WDATA->column->prev(WDATA);
-                if (!PREV)
-                    PREV = WDATA->column->windowDatas.back();
+                if (!PREV) {
+                    if (*PNOFALLBACK)
+                        break;
+                    else
+                        PREV = WDATA->column->windowDatas.back();
+                }
 
                 g_pCompositor->focusWindow(PREV->window.lock());
                 break;
@@ -1057,8 +1068,12 @@ std::any CScrollingLayout::layoutMessage(SLayoutMessageHeader header, std::strin
             case 'b':
             case 'd': {
                 auto NEXT = WDATA->column->next(WDATA);
-                if (!NEXT)
-                    NEXT = WDATA->column->windowDatas.front();
+                if (!NEXT) {
+                    if (*PNOFALLBACK)
+                        break;
+                    else
+                        NEXT = WDATA->column->windowDatas.front();
+                }
 
                 g_pCompositor->focusWindow(NEXT->window.lock());
                 break;
@@ -1066,8 +1081,14 @@ std::any CScrollingLayout::layoutMessage(SLayoutMessageHeader header, std::strin
 
             case 'l': {
                 auto PREV = WDATA->column->workspace->prev(WDATA->column.lock());
-                if (!PREV)
-                    PREV = WDATA->column->workspace->columns.back();
+                if (!PREV) {
+                    if (*PNOFALLBACK) {
+                        centerOrFit(WDATA->column->workspace.lock(), WDATA->column.lock());
+                        WDATA->column->workspace->recalculate();
+                        break;
+                    } else
+                        PREV = WDATA->column->workspace->columns.back();
+                }
 
                 g_pCompositor->focusWindow(PREV->windowDatas.front()->window.lock());
                 centerOrFit(WDATA->column->workspace.lock(), PREV);
@@ -1077,8 +1098,14 @@ std::any CScrollingLayout::layoutMessage(SLayoutMessageHeader header, std::strin
 
             case 'r': {
                 auto NEXT = WDATA->column->workspace->next(WDATA->column.lock());
-                if (!NEXT)
-                    NEXT = WDATA->column->workspace->columns.front();
+                if (!NEXT) {
+                    if (*PNOFALLBACK) {
+                        centerOrFit(WDATA->column->workspace.lock(), WDATA->column.lock());
+                        WDATA->column->workspace->recalculate();
+                        break;
+                    } else
+                        NEXT = WDATA->column->workspace->columns.front();
+                }
 
                 g_pCompositor->focusWindow(NEXT->windowDatas.front()->window.lock());
                 centerOrFit(WDATA->column->workspace.lock(), NEXT);
